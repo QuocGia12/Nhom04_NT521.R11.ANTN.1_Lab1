@@ -1,54 +1,92 @@
-# Security Requirements cho json_search()
+# Threat Model cho json_search()
 
-## 1. Mục tiêu
+## 1. Actor / Role
 
-Hàm `json_search()` được sử dụng để tìm kiếm thông tin trong dữ liệu JSON
-trả về từ API giám sát hạ tầng mạng.
+Hàm `json_search()` có thể được gọi bởi các role:
 
-Do dữ liệu có thể chứa các thông tin nhạy cảm, hàm cần kiểm tra quyền của
-người dùng trước khi trả về kết quả.
-
-## 2. Các role
-
-Hệ thống có các role:
-
-- `admin`: quản trị hệ thống, có quyền truy cập cao nhất.
+- `admin`: quản trị hệ thống.
 - `operator`: vận hành và giám sát hệ thống.
-- `viewer`: chỉ được xem các thông tin thông thường.
+- `viewer`: xem các thông tin được cho phép.
 
-Quyền truy cập cụ thể của từng role được xác định trong `policy.py`.
+Mỗi role chỉ được truy cập các trường dữ liệu được quy định trong
+`policy.py`.
 
-## 3. Security Requirements
+## 2. Asset cần bảo vệ
 
-### SR-01: Kiểm tra role
+Dữ liệu JSON có thể chứa các thông tin nhạy cảm như:
 
-Hàm `json_search()` phải kiểm tra role của người gọi trước khi trả về
-kết quả tìm kiếm.
+- Thông tin định danh thiết bị.
+- Địa chỉ và thông tin hạ tầng mạng.
+- API key.
+- SNMP credential hoặc chuỗi xác thực.
+- Các thông tin nhạy cảm khác của hệ thống.
 
-### SR-02: Kiểm soát quyền truy cập
+Các dữ liệu này không được trả về cho người dùng không có quyền.
 
-Hệ thống chỉ trả về giá trị của một trường nếu role của người dùng được
-phép truy cập trường đó theo `policy.py`.
+## 3. Trust Boundary
 
-### SR-03: Bảo vệ dữ liệu nhạy cảm
+Trust boundary nằm giữa người gọi hàm và dữ liệu trả về từ API:
 
-Các thông tin nhạy cảm như API key, thông tin xác thực, SNMP credential
-hoặc thông tin định danh thiết bị không được trả về cho role không có quyền.
+    User
+      |
+      | role
+      v
+    json_search()
+      |
+      | kiểm tra quyền
+      v
+    policy.py
+      |
+      v
+    JSON Data
 
-Ví dụ, nếu `viewer` không có quyền đọc `apiKey`:
+Nếu `json_search()` không kiểm tra role trước khi trả về kết quả thì
+trust boundary này bị bỏ qua.
+
+Khi đó người dùng có quyền thấp vẫn có thể tìm kiếm và đọc các trường
+dữ liệu nhạy cảm.
+
+## 4. Threats
+
+### T-01: Information Disclosure
+
+Người dùng có quyền thấp, ví dụ `viewer`, có thể tìm kiếm các trường
+nhạy cảm như `apiKey`.
+
+Nếu hàm không kiểm tra role, giá trị của trường có thể bị trả về cho
+người dùng không có quyền.
+
+Ví dụ:
 
     json_search("apiKey", data, role="viewer")
 
-phải trả về:
+Nếu `viewer` không được phép đọc `apiKey` nhưng hàm vẫn trả về giá trị,
+thông tin nhạy cảm đã bị lộ.
 
-    []
+Biện pháp:
 
-### SR-04: Từ chối role không hợp lệ
+- Kiểm tra role trước khi trả về kết quả.
+- Nếu role không có quyền thì trả về `[]`.
 
-Nếu role không tồn tại hoặc không được phép truy cập trường được yêu cầu,
-hàm phải trả về kết quả rỗng thay vì trả về dữ liệu.
+### T-02: Elevation of Privilege
 
-### SR-05: Kiểm tra quyền khi tìm kiếm đệ quy
+Người dùng có role thấp có thể cố truy cập dữ liệu dành cho role có
+quyền cao hơn.
 
-Việc kiểm tra quyền phải được áp dụng cho cả dữ liệu nằm bên trong các
-dictionary hoặc list lồng nhau.
+Nếu hàm không kiểm tra quyền, `viewer` hoặc `operator` có thể truy cập
+các trường chỉ dành cho role có quyền cao hơn.
+
+Biện pháp:
+
+- Kiểm tra quyền dựa trên `policy.py`.
+- Chỉ trả về dữ liệu khi role được phép truy cập trường đó.
+
+## 5. Kết luận
+
+`json_search()` phải kiểm tra role trước khi trả về kết quả.
+
+Nếu role không có quyền truy cập trường được yêu cầu, hàm phải trả về
+danh sách rỗng `[]`.
+
+Các yêu cầu này sẽ được sử dụng để xây dựng security test cho
+`json_search()` ở bước tiếp theo.
